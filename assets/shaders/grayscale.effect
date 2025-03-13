@@ -1,0 +1,75 @@
+// Copyright (c) 2017-2020 Xiamen Yaji Software Co., Ltd.
+
+CCEffect %{
+  techniques:
+  - passes:
+    - vert: vs
+      frag: fs
+      pass: post-process
+      rasterizerState:
+        cullMode: none
+      depthStencilState:
+        depthTest: false
+        depthWrite: false
+      blendState:
+        targets:
+        - blend: true
+          blendSrc: one
+          blendDst: zero
+}%
+
+
+CCProgram vs %{
+  
+  precision highp float;
+    
+  #include <legacy/decode-standard>
+  #include <builtin/uniforms/cc-global>
+  #include <common/common-define>
+
+  out vec2 v_uv;
+
+  void main () {
+    StandardVertInput In;
+    CCDecode(In);
+    CC_HANDLE_GET_CLIP_FLIP(In.position.xy);
+    gl_Position = In.position;
+
+    v_uv = a_texCoord;
+  }
+
+}%
+
+CCProgram ubo %{
+    uniform PostUBO {
+        float progress;
+    };
+    #pragma rate inputTexture pass
+    uniform sampler2D inputTexture;
+    #pragma rate depthTexture pass
+    uniform sampler2D depthTexture;
+}%
+
+CCProgram fs %{
+  precision highp float;
+
+  #include <builtin/uniforms/cc-global>
+  #include <legacy/output-standard>
+  #include <unpack>
+
+  in vec2 v_uv;
+  #include <ubo>
+
+  layout(location = 0) out vec4 fragColor;
+  void main () {
+      fragColor = texture(inputTexture, v_uv);
+      float wR = 0.2126;
+      float wG = 0.7152;
+      float wB = 0.0722;
+      float r = fragColor.r * ((wR - 1.0) * progress + 1.0) + fragColor.g * progress * wG + fragColor.b * progress * wB;
+      float g = fragColor.r * progress * wR + fragColor.g * ((wG - 1.0) * progress + 1.0) + fragColor.b * progress * wB;
+      float b = fragColor.r * progress * wR + fragColor.g * progress * wG + fragColor.b * ((wB - 1.0) * progress + 1.0);
+      fragColor.rgb = vec3(r, g, b);
+  }
+}%
+

@@ -1,0 +1,132 @@
+// Copyright (c) 2017-2020 Xiamen Yaji Software Co., Ltd.
+CCEffect %{
+  techniques:
+  - passes:
+    - vert: sprite-vs:vert
+      frag: sprite-fs:frag
+      depthStencilState:
+        depthTest: false
+        depthWrite: false
+      blendState:
+        targets:
+        - blend: true
+          blendSrc: src_alpha
+          blendDst: one_minus_src_alpha
+          blendDstAlpha: one_minus_src_alpha
+      rasterizerState:
+        cullMode: none
+      properties:
+        bottom_color: { value: [1.0, 0.0, 0.0, 1.0], editor: {type: color}}
+        top_color: { value: [0.0, 1.0, 0.0, 1.0], editor: {type: color}}
+        wave_amp: { value: 0.0, editor: {range: [0.0, 0.5, 0.01], slide: true}}
+        wave_size: { value: 1.0, editor: {range: [1.0, 10.0, 0.1], slide: true}}
+        wave_time_mul: { value: 0.1, editor: {range: [0.1, 2.0, 0.1], slide: true}}
+        total_phases: { value: 2, editor: {range: [2, 500, 1], slide: true}}
+}%
+
+CCProgram sprite-vs %{
+  precision highp float;
+  #include <builtin/uniforms/cc-global>
+  #if USE_LOCAL
+    #include <builtin/uniforms/cc-local>
+  #endif
+  #if SAMPLE_FROM_RT
+    #include <common/common-define>
+  #endif
+  in vec3 a_position;
+  in vec2 a_texCoord;
+  in vec4 a_color;
+
+  out vec4 color;
+  out vec2 uv0;
+
+  vec4 vert () {
+    vec4 pos = vec4(a_position, 1);
+
+    #if USE_LOCAL
+      pos = cc_matWorld * pos;
+    #endif
+
+    #if USE_PIXEL_ALIGNMENT
+      pos = cc_matView * pos;
+      pos.xyz = floor(pos.xyz);
+      pos = cc_matProj * pos;
+    #else
+      pos = cc_matViewProj * pos;
+    #endif
+
+    uv0 = a_texCoord;
+    #if SAMPLE_FROM_RT
+      CC_HANDLE_RT_SAMPLE_FLIP(uv0);
+    #endif
+    color = a_color;
+
+
+    return pos;
+  }
+}%
+
+CCProgram sprite-fs %{
+  precision highp float;
+  #include <builtin/internal/embedded-alpha>
+  #include <builtin/internal/alpha-test>
+  #include <cc-global>
+  #include <common-define>
+
+  in vec4 color;
+
+  #if USE_TEXTURE
+    in vec2 uv0;
+    #pragma builtin(local)
+    layout(set = 2, binding = 12) uniform sampler2D cc_spriteTexture;
+  #endif
+
+  uniform DATA {
+    vec4 bottom_color;
+    vec4 top_color;
+    float wave_amp;
+    float wave_size;
+    float wave_time_mul;
+    int total_phases;
+  };
+
+  float rand(float n){return fract(sin(n) * 43758.5453123);}
+
+  float noise(float p){
+    float fl = floor(p);
+    float fc = fract(p);
+    return mix(rand(fl), rand(fl + 1.0), fc);
+  }
+
+  float fmod(float x, float y) {
+    return x - floor(x / y) * y;
+  }
+
+  vec4 frag () {
+    vec4 o = vec4(1, 1, 1, 1);
+
+    #if USE_TEXTURE
+      float t = float(total_phases);
+      float effective_wave_amp = min(wave_amp, 0.5 / t);
+      float d = fmod(uv0.y, 1.0 / t);
+      float i = floor(uv0.y * t);
+      float vi = floor(uv0.y * t + t * effective_wave_amp);
+      float s = effective_wave_amp * sin((uv0.x + cc_time.x * max(1.0 / t, noise(vi)) * wave_time_mul * vi / t) * 2.0 * PI * wave_size);
+      
+      if (d < s) i--;
+      if (d > s + 1.0 / t) i++;
+      i = clamp(i, 0.0, t - 1.0);
+      
+      o = mix(top_color, bottom_color, i / (t - 1.0));
+
+      #if IS_GRAY
+        float gray  = 0.2126 * o.r + 0.7152 * o.g + 0.0722 * o.b;
+        o.r = o.g = o.b = gray;
+      #endif
+    #endif
+
+    o *= color;
+    ALPHA_TEST(o);
+    return o;
+  }
+}%
